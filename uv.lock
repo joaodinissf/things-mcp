@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -1243,12 +1243,12 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastmcp", specifier = ">=3.0.0,<4" },
-    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "fastmcp", specifier = "==3.4.0" },
+    { name = "httpx", specifier = "==0.28.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.24.0" },
     { name = "pytest-mock", marker = "extra == 'test'", specifier = ">=3.14.0" },
-    { name = "things-py", specifier = ">=0.0.15" },
+    { name = "things-py", specifier = "==0.0.15" },
 ]
 provides-extras = ["test"]
 
