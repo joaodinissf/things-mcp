@@ -1,4 +1,5 @@
 from typing import List
+import asyncio
 import json
 import logging
 import os
@@ -21,6 +22,41 @@ HTTP_PORT = int(os.environ.get("THINGS_MCP_PORT", "8000"))
 
 # Cap on bulk_update_todos, so one call cannot rewrite a whole list.
 BULK_UPDATE_MAX_IDS = 100
+
+# How long to wait for Things to show a project created through the URL scheme.
+READ_BACK_TIMEOUT_S = 10.0
+READ_BACK_INTERVAL_S = 0.5
+
+
+def _project_uuids_titled(title):
+    return {p['uuid'] for p in (things.projects() or []) if p.get('title') == title}
+
+
+async def _read_back_new_project(title, existing_uuids, headings):
+    """Find the project the URL scheme just created and report its headings.
+
+    Things accepts URL-scheme writes without reporting errors and silently
+    ignores what it does not support, so success is only claimed after the
+    project and every requested heading are found in the database.
+    """
+    waited = 0.0
+    while True:
+        new = _project_uuids_titled(title) - existing_uuids
+        if len(new) == 1:
+            project_uuid = new.pop()
+            found = things.tasks(type='heading', project=project_uuid) or []
+            if len(found) >= len(headings) or waited >= READ_BACK_TIMEOUT_S:
+                break
+        elif waited >= READ_BACK_TIMEOUT_S:
+            return {"status": "unverified",
+                    "message": f"Sent, but found {len(new)} new projects titled {title!r}; check Things."}
+        await asyncio.sleep(READ_BACK_INTERVAL_S)
+        waited += READ_BACK_INTERVAL_S
+
+    created = [{"uuid": h['uuid'], "title": h['title']} for h in found]
+    missing = [h for h in headings if h not in {c['title'] for c in created}]
+    return {"status": "created" if not missing else "incomplete",
+            "project_uuid": project_uuid, "headings": created, "missing_headings": missing}
 
 # Initialize FastMCP server
 mcp = FastMCP("Things")
@@ -677,9 +713,14 @@ async def add_project(
     tags: List[str] = None,
     area_id: str = None,
     area_title: str = None,
-    todos: List[str] = None
+    todos: List[str] = None,
+    headings: List[str] = None,
 ) -> str:
     """Create a new project in Things
+
+    Headings can only be created this way: Things offers no way to add a
+    heading to an existing project. To give an existing project new headings,
+    create them here and have the user drag them into that project.
 
     Args:
         title: Title of the project
@@ -690,8 +731,20 @@ async def add_project(
         tags: Tags to apply to the project
         area_id: ID of area to add to
         area_title: Title of area to add to
-        todos: Initial todos to create in the project
+        todos: Initial todos to create in the project (above any headings)
+        headings: Heading titles to create, in order. The result lists the
+            created project and heading UUIDs, read back from Things.
     """
+    if headings:
+        existing = _project_uuids_titled(title)
+        url = url_scheme.add_project_with_headings(
+            title=title, headings=headings, notes=notes, when=when,
+            deadline=deadline, tags=tags, area_id=area_id,
+            area_title=area_title, todos=todos,
+        )
+        url_scheme.execute_url(url)
+        return json.dumps(await _read_back_new_project(title, existing, headings))
+
     url = url_scheme.add_project(
         title=title,
         notes=notes,

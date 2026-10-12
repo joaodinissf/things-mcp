@@ -6,8 +6,9 @@ from tests._helpers import tool_text
 from things_mcp.server import (
     get_todos, get_today, get_inbox, search_todos, search_advanced,
     get_logbook, _parse_logbook_period, _today_fallback, get_tag_usage,
-    bulk_update_todos,
+    bulk_update_todos, add_project,
 )
+import things_mcp.server as server_module
 
 
 @pytest.mark.asyncio
@@ -411,6 +412,68 @@ async def test_bulk_update_todos_caps_ids(mocker):
 
     assert "at most 100" in result
     mock_exec.assert_not_called()
+
+
+# --- add_project with headings (fix 3) ----------------------------------------
+
+def _decode_json_command(url):
+    query = urllib.parse.urlparse(url).query
+    return json.loads(urllib.parse.parse_qs(query)['data'][0])
+
+
+@pytest.mark.asyncio
+async def test_add_project_with_headings_reads_back(mocker):
+    old = {'uuid': 'old', 'title': 'Plan'}
+    new = {'uuid': 'new', 'title': 'Plan'}
+    mocker.patch('things.projects', side_effect=[[old], [old, new]])
+    mocker.patch('things.tasks', return_value=[
+        {'uuid': 'h1', 'title': 'A'}, {'uuid': 'h2', 'title': 'B'}])
+    mock_exec = mocker.patch('things_mcp.server.url_scheme.execute_url')
+
+    result = json.loads(await add_project(title='Plan', headings=['A', 'B'], todos=['first'], area_id='area'))
+
+    assert result == {'status': 'created', 'project_uuid': 'new',
+                      'headings': [{'uuid': 'h1', 'title': 'A'}, {'uuid': 'h2', 'title': 'B'}],
+                      'missing_headings': []}
+    payload = _decode_json_command(mock_exec.call_args[0][0])
+    assert payload[0]['type'] == 'project'
+    assert payload[0]['attributes']['area-id'] == 'area'
+    assert [(i['type'], i['attributes']['title']) for i in payload[0]['attributes']['items']] == [
+        ('to-do', 'first'), ('heading', 'A'), ('heading', 'B')]
+
+
+@pytest.mark.asyncio
+async def test_add_project_with_headings_reports_missing(mocker):
+    mocker.patch.object(server_module, 'READ_BACK_TIMEOUT_S', 0.0)
+    mocker.patch('things.projects', side_effect=[[], [{'uuid': 'new', 'title': 'Plan'}]])
+    mocker.patch('things.tasks', return_value=[{'uuid': 'h1', 'title': 'A'}])
+    mocker.patch('things_mcp.server.url_scheme.execute_url')
+
+    result = json.loads(await add_project(title='Plan', headings=['A', 'B']))
+
+    assert result['status'] == 'incomplete'
+    assert result['missing_headings'] == ['B']
+
+
+@pytest.mark.asyncio
+async def test_add_project_with_headings_unverified_when_not_found(mocker):
+    mocker.patch.object(server_module, 'READ_BACK_TIMEOUT_S', 0.0)
+    mocker.patch('things.projects', return_value=[])
+    mocker.patch('things_mcp.server.url_scheme.execute_url')
+
+    result = json.loads(await add_project(title='Plan', headings=['A']))
+
+    assert result['status'] == 'unverified'
+
+
+@pytest.mark.asyncio
+async def test_add_project_without_headings_uses_add_project_url(mocker):
+    mock_exec = mocker.patch('things_mcp.server.url_scheme.execute_url')
+
+    result = await add_project(title='Plan', todos=['a'])
+
+    assert mock_exec.call_args[0][0].startswith('things:///add-project?')
+    assert result == 'Created new project: Plan'
 
 
 # --- pagination: limit / offset across read tools (#41) -----------------------

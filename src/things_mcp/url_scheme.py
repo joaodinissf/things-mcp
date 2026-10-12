@@ -229,6 +229,34 @@ def add_project(title: str, notes: Optional[str] = None, when: Optional[str] = N
 
     return construct_url('add-project', {k: v for k, v in params.items() if v is not None})
 
+
+def add_project_with_headings(title: str, headings: list[str], notes: Optional[str] = None,
+                              when: Optional[str] = None, deadline: Optional[str] = None,
+                              tags: Optional[list[str]] = None, area_id: Optional[str] = None,
+                              area_title: Optional[str] = None,
+                              todos: Optional[list[str]] = None) -> str:
+    """Construct a json-command URL that creates a project with headings.
+
+    Headings can only be created inside a new project's 'items' (the json
+    'update' operation ignores 'items', and AppleScript has no headings).
+    Initial todos go above the first heading.
+    """
+    attributes: Dict[str, Any] = {
+        'title': title,
+        'notes': notes,
+        'when': when,
+        'deadline': deadline,
+        'tags': tags,
+        'area-id': area_id,
+        'area': area_title,
+    }
+    items = [{'type': 'to-do', 'attributes': {'title': t}} for t in (todos or [])]
+    items += [{'type': 'heading', 'attributes': {'title': h}} for h in headings]
+    attributes['items'] = items
+    payload = [{'type': 'project',
+                'attributes': {k: v for k, v in attributes.items() if v is not None}}]
+    return json_command(payload)
+
 def update_todo(id: str, title: Optional[str] = None, notes: Optional[str] = None,
                 when: Optional[str] = None, deadline: Optional[str] = None,
                 tags: Optional[list[str]] = None,
