@@ -19,6 +19,9 @@ TRANSPORT = os.environ.get("THINGS_MCP_TRANSPORT", "stdio")  # "stdio" or "http"
 HTTP_HOST = os.environ.get("THINGS_MCP_HOST", "127.0.0.1")
 HTTP_PORT = int(os.environ.get("THINGS_MCP_PORT", "8000"))
 
+# Cap on bulk_update_todos, so one call cannot rewrite a whole list.
+BULK_UPDATE_MAX_IDS = 100
+
 # Initialize FastMCP server
 mcp = FastMCP("Things")
 
@@ -776,17 +779,18 @@ async def bulk_update_todos(
     heading_id: str = None,
     completed: bool = None,
     canceled: bool = None,
+    confirm: bool = False,
 ) -> str:
     """Apply the same change to many to-dos in a single Things round-trip.
 
     Use for weekly-review style operations — e.g. "move every grocery item
-    in my inbox to Shopping List", "tag this batch with 'next-quarter'",
-    "complete all of these". One URL invocation replaces N sequential
-    update_todo calls, which makes 20-task moves feel instant instead of
-    taking minutes.
+    in my inbox to Shopping List", "tag this batch with 'next-quarter'".
+    One URL invocation replaces N sequential update_todo calls.
 
     All non-None parameters apply to every id in 'ids'. For per-item
-    changes use update_todo individually.
+    changes use update_todo individually. At most 100 ids per call.
+    Completing or canceling requires confirm=True, and only after the user
+    has approved that exact list of items.
 
     Args:
         ids: UUIDs of todos to update
@@ -800,9 +804,19 @@ async def bulk_update_todos(
         heading_id: Move all under this heading UUID (takes precedence over heading)
         completed: Mark all completed
         canceled: Mark all canceled
+        confirm: Required (True) when completed or canceled is set
     """
     if not ids:
         return "No items to update"
+    if len(ids) > BULK_UPDATE_MAX_IDS:
+        return f"Too many ids ({len(ids)}); at most {BULK_UPDATE_MAX_IDS} per call."
+    if completed and canceled:
+        return "Pass completed or canceled, not both."
+    if (completed is not None or canceled is not None) and not confirm:
+        return (
+            "Completing or canceling in bulk requires confirm=True, "
+            "after the user has approved this exact list of items."
+        )
 
     attributes: dict = {}
     if list_id is not None:

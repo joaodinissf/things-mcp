@@ -29,6 +29,11 @@ def format_when_with_reminder(date: str, time: str) -> str:
     """
     return f"{date}@{time}"
 
+class ThingsURLError(RuntimeError):
+    """A Things URL could not be dispatched. The message never contains the URL,
+    because update URLs carry the auth-token."""
+
+
 def execute_url(url: str) -> None:
     """Execute a Things URL without bringing Things to the foreground."""
     try:
@@ -39,7 +44,13 @@ def execute_url(url: str) -> None:
         ], check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError:
         # Fallback - still try with open -g directly
-        subprocess.run(['open', '-g', url], check=True)
+        try:
+            subprocess.run(['open', '-g', url], check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            # 'from None' drops the chained exceptions, whose text includes the URL.
+            raise ThingsURLError(
+                f"Things did not accept the URL (open exited with {e.returncode})."
+            ) from None
 
 
 def add_area(title: str) -> str:
@@ -111,8 +122,13 @@ def construct_url(command: str, params: Dict[str, Any]) -> str:
     # Get authentication token if needed
     if command in ['update', 'update-project']:
         token = things.token()
-        if token:
-            params['auth-token'] = token
+        if not token:
+            # Without a token Things ignores the update, but callers would report success.
+            raise ThingsURLError(
+                "THINGS_AUTH_TOKEN not configured. Updates require it. "
+                "Enable in Things → Settings → General → Manage."
+            )
+        params['auth-token'] = token
 
     # URL encode parameters
     if params:

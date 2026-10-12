@@ -6,7 +6,7 @@ import urllib.parse
 from things_mcp.url_scheme import (
     execute_url, construct_url, add_todo, add_project, add_area, update_area,
     update_todo, update_project, show, search, format_when_with_reminder,
-    json_command,
+    json_command, ThingsURLError,
 )
 
 
@@ -37,7 +37,7 @@ class TestExecuteUrl:
         execute_url("things:///add?title=Test")
 
         assert mock_run.call_count == 2
-        mock_run.assert_called_with(['open', '-g', 'things:///add?title=Test'], check=True)
+        mock_run.assert_called_with(['open', '-g', 'things:///add?title=Test'], check=True, capture_output=True)
 
 
 class TestAddArea:
@@ -175,6 +175,30 @@ class TestConstructUrl:
         url = construct_url("update-project", params)
         assert "title=Example%202%2F13%20project%20title" in url
         assert "2/13" not in url
+
+    @patch('subprocess.run')
+    def test_execute_url_error_hides_url(self, mock_run):
+        """A failed dispatch must not echo the URL, which carries the auth-token."""
+        url = "things:///update?id=x&auth-token=secret-token"
+        mock_run.side_effect = [
+            subprocess.CalledProcessError(1, ['osascript', '-e', url]),
+            subprocess.CalledProcessError(1, ['open', '-g', url]),
+        ]
+
+        with pytest.raises(ThingsURLError) as excinfo:
+            execute_url(url)
+
+        assert "secret-token" not in str(excinfo.value)
+        assert excinfo.value.__context__ is None or excinfo.value.__suppress_context__
+
+    @patch('things.token')
+    def test_construct_url_update_without_token_raises(self, mock_token):
+        """Without a token Things ignores updates, so refuse instead of reporting success."""
+        mock_token.return_value = None
+
+        for command in ("update", "update-project"):
+            with pytest.raises(ThingsURLError):
+                construct_url(command, {"id": "x", "title": "t"})
 
     @patch('things.token')
     def test_construct_url_auth_token_update(self, mock_token):

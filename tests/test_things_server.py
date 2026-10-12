@@ -371,13 +371,46 @@ async def test_bulk_update_todos_complete_and_tag(mocker):
     mock_exec = mocker.patch('things_mcp.server.url_scheme.execute_url')
 
     await bulk_update_todos(
-        ids=["u1", "u2"], completed=True, add_tags=["reviewed"]
+        ids=["u1", "u2"], completed=True, add_tags=["reviewed"], confirm=True
     )
 
     payload = _captured_json_payload(mock_exec)
     for p in payload:
         assert p["attributes"]["completed"] is True
         assert p["attributes"]["add-tags"] == ["reviewed"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_update_todos_complete_requires_confirm(mocker):
+    mocker.patch('things.token', return_value='tok')
+    mock_exec = mocker.patch('things_mcp.server.url_scheme.execute_url')
+
+    for flag in ({"completed": True}, {"canceled": True}):
+        result = await bulk_update_todos(ids=["u1"], **flag)
+        assert "confirm=True" in result
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bulk_update_todos_rejects_completed_and_canceled(mocker):
+    mocker.patch('things.token', return_value='tok')
+    mock_exec = mocker.patch('things_mcp.server.url_scheme.execute_url')
+
+    result = await bulk_update_todos(ids=["u1"], completed=True, canceled=True, confirm=True)
+
+    assert "not both" in result
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bulk_update_todos_caps_ids(mocker):
+    mocker.patch('things.token', return_value='tok')
+    mock_exec = mocker.patch('things_mcp.server.url_scheme.execute_url')
+
+    result = await bulk_update_todos(ids=[f"u{i}" for i in range(101)], list="Shopping")
+
+    assert "at most 100" in result
+    mock_exec.assert_not_called()
 
 
 # --- pagination: limit / offset across read tools (#41) -----------------------
